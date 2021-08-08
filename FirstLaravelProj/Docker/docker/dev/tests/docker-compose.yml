@@ -1,0 +1,31 @@
+version: '3'
+
+######### Services ###################################
+
+services:
+  ngrok:
+    image: shkoliar/ngrok:latest
+    ports:
+      - 4551:4551
+    environment:
+      - DOMAIN=nginx
+      - PORT=81
+    networks:
+      - saas-default-network
+
+  selenium-chrome:
+    build:
+      context: chrome
+      dockerfile: Dockerfile
+    command: bash -c "/opt/bin/entry_point.sh & node tcp-proxy.js"
+    volumes:
+      - /dev/shm:/dev/shm
+      - ./tcp-proxy.js:/app/tcp-proxy.js
+    ports:
+      - "44444:4444"
+    networks:
+      - saas-default-network
+
+networks:
+  saas-default-network:
+    external: true

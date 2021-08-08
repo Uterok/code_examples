@@ -1,0 +1,150 @@
+version: '3'
+
+services:
+  nginx:
+    build:
+      context: docker/dev/nginx
+      dockerfile: Dockerfile
+    restart: always
+    volumes:
+      - ./:/var/www
+      - ./docker/dev/nginx/logs:/var/log/nginx
+    ports:
+      # Nuxt port
+      - 8080:80
+      # Laravel port
+      - 8081:81
+    depends_on:
+      - client
+      - php
+
+  # PHP FastCGI Process Manager container
+  php:
+    build:
+      context: docker/dev/php
+      dockerfile: Dockerfile
+    restart: always
+    volumes:
+      - ./api:/var/www/api
+      - ./docker/sync_containers:/var/www/sync_containers
+    environment:
+      # If you down want to use xDebug, set remote_enable=0
+      - XDEBUG_CONFIG=${XDEBUG_CONFIG}
+      - PHP_IDE_CONFIG=${PHP_IDE_CONFIG}
+      - AWS_REGION=${AWS_REGION}
+      - DYNAMO_DB_TABLE=${DYNAMO_DB_TABLE}
+      - PHP_OPCACHE_VALIDATE_TIMESTAMPS=${PHP_OPCACHE_VALIDATE_TIMESTAMPS}
+      - PHP_OPCACHE_MAX_ACCELERATED_FILES=${PHP_OPCACHE_MAX_ACCELERATED_FILES}
+      - PHP_OPCACHE_MEMORY_CONSUMPTION=${PHP_OPCACHE_MEMORY_CONSUMPTION}
+      - PHP_OPCACHE_MAX_WASTED_PERCENTAGE=${PHP_OPCACHE_MAX_WASTED_PERCENTAGE}
+    depends_on:
+      - mysql
+      - mysql-testing
+      - mailhog
+      - beanstalkd
+      - dynamodb
+
+  # Supervisor container (schedule and queue runner)
+  supervisor:
+    build:
+      context: docker/dev/supervisor
+      dockerfile: Dockerfile
+    restart: always
+    volumes:
+      - ./:/var/www/
+      - ./docker/dev/supervisor/conf.d:/etc/supervisor/conf.d
+      - ./docker/dev/supervisor/logs:/var/log
+    environment:
+      - PHP_OPCACHE_VALIDATE_TIMESTAMPS=${PHP_OPCACHE_VALIDATE_TIMESTAMPS}
+      - PHP_OPCACHE_MAX_ACCELERATED_FILES=${PHP_OPCACHE_MAX_ACCELERATED_FILES}
+      - PHP_OPCACHE_MEMORY_CONSUMPTION=${PHP_OPCACHE_MEMORY_CONSUMPTION}
+      - PHP_OPCACHE_MAX_WASTED_PERCENTAGE=${PHP_OPCACHE_MAX_WASTED_PERCENTAGE} 
+    depends_on:
+      - mysql
+      - mailhog
+      - beanstalkd
+
+  mysql:
+    build:
+      context: docker/dev/mysql
+      dockerfile: Dockerfile
+    restart: always
+    volumes:
+      # Database volume
+      - database:/var/lib/mysql
+      # Configs volume
+      - ./docker/dev/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+      # Mysql logs files
+      - ./docker/dev/mysql/logs:/var/log/mysql
+    ports:
+      - 33061:3306
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+    security_opt:
+      - seccomp:unconfined
+    networks:
+      default:
+        aliases:
+          - mysql.svc
+
+  mysql-testing:
+    build:
+      context: docker/dev/mysql
+      dockerfile: Dockerfile
+    restart: always
+    volumes:
+      # Configs volume
+      - ./docker/dev/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+      # Mysql logs files
+      - ./docker/dev/mysql/logs_tst:/var/log/mysql
+    ports:
+      - 33062:3306
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+    security_opt:
+      - seccomp:unconfined
+
+  # Mailhog container (SMTP testing)
+  mailhog:
+    image: mailhog/mailhog
+    restart: always
+    ports:
+      - 8026:8025
+
+  client:
+    build:
+      context: docker/dev/client
+      dockerfile: Dockerfile
+    restart: always
+    volumes:
+      - ./client:/var/www/client
+      - ./docker/sync_containers:/var/www/sync_containers
+    command: bash -c 'yarn && if [ "$$NODE_ENV" == "production" ]; then echo "START IN PRODUCTION MODE"; yarn generate && yarn start; else echo "START IN DEV MODE"; yarn dev; fi'
+    environment:
+      - WDIO_BROWSER_NAME="chrome"
+      - NODE_ENV=${NODE_ENV}
+
+  beanstalkd:
+    image: bodsch/docker-beanstalkd:latest
+    restart: always
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8448:8080
+
+volumes:
+  database:
+    driver: local
+
+networks:
+  default:
+    driver: bridge
+    name: saas-default-network
